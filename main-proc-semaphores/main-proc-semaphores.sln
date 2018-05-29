@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.27703.2018
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "main-proc-semaphores", "main-proc-semaphores\main-proc-semaphores.vcxproj", "{89334D71-89BF-4B46-A8BE-6383C5F4B6DF}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{89334D71-89BF-4B46-A8BE-6383C5F4B6DF}.Debug|x64.ActiveCfg = Debug|x64
+		{89334D71-89BF-4B46-A8BE-6383C5F4B6DF}.Debug|x64.Build.0 = Debug|x64
+		{89334D71-89BF-4B46-A8BE-6383C5F4B6DF}.Debug|x86.ActiveCfg = Debug|Win32
+		{89334D71-89BF-4B46-A8BE-6383C5F4B6DF}.Debug|x86.Build.0 = Debug|Win32
+		{89334D71-89BF-4B46-A8BE-6383C5F4B6DF}.Release|x64.ActiveCfg = Release|x64
+		{89334D71-89BF-4B46-A8BE-6383C5F4B6DF}.Release|x64.Build.0 = Release|x64
+		{89334D71-89BF-4B46-A8BE-6383C5F4B6DF}.Release|x86.ActiveCfg = Release|Win32
+		{89334D71-89BF-4B46-A8BE-6383C5F4B6DF}.Release|x86.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {49DB82B6-4CE3-4A5D-9F43-B6F0B3704B9F}
+	EndGlobalSection
+EndGlobal
