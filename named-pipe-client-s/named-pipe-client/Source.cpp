@@ -1,14 +1,8 @@
 #include <iostream>
+#include <string>
 #include <windows.h> 
-#include <stdio.h>
-#include <conio.h>
-#include <tchar.h>
-
-#define LOG(arg) std::cout << "LOG: " << arg << std::endl
 
 #define PIPE_NAME "\\\\.\\pipe\\foo"
-#define MSG "Hello, World!\0"
-#define MSG_LEN 15
 
 int main()
 {
@@ -22,26 +16,44 @@ int main()
 		// Check for errors
 		if (hPipe == INVALID_HANDLE_VALUE)
 			throw std::runtime_error("ERROR: Failed to open named pipe!");
-		LOG("Named Pipe was opened!");
 
 		// Check for errors
-		/*if (!WaitNamedPipe(PIPE_NAME, NMPWAIT_USE_DEFAULT_WAIT))
+		/*if (!WaitNamedPipe(PIPE_NAME, NMPWAIT_WAIT_FOREVER))
 			throw std::runtime_error("ERROR: Failed to connect to named pipe!");
-		LOG("Named Pipe replied on Wait!");*/
+		*/
 
 		// Switch pipe to message mode
 		DWORD dwArg = PIPE_READMODE_MESSAGE | PIPE_WAIT;
 		if (!SetNamedPipeHandleState(hPipe, &dwArg, NULL, NULL))
 			throw std::runtime_error("ERROR: Failed to switch pipe to message mode!");
-		LOG("Flags was set!");
 
-		// Send message to server
-		BOOL bWriteFile = WriteFile(hPipe, MSG, MSG_LEN, &dwArg, NULL);
+		// Prompt user input
+		std::cout << "Start sending messages to server.\
+		\nType 'exit' in console to exit application.\n"
+		<< std::endl;
 
-		// Check for errors
-		if (!bWriteFile)
-			throw std::runtime_error("ERROR: Failed to write to pipe!");
-		LOG("Message was send!");
+		for (std::string el;;) {
+			// Read message from stdin
+			// 'exit' is the exit
+			std::cout << '>' << ' ';
+			std::getline(std::cin, el);
+			
+			// Check for empty messages
+			if (el.length()) {
+				if (el.compare("exit")) {
+					// Send message to server
+					BOOL bWF = WriteFile(hPipe, el.c_str(), el.length(), &dwArg, NULL);
+
+					// Check for errors
+					if (!bWF)
+						throw std::runtime_error("ERROR: Failed to write to pipe!");
+
+					// Flush if succeeded
+					FlushFileBuffers(hPipe);
+				}
+				else break;
+			}
+		}
 
 		// Close pipe handle
 		CloseHandle(hPipe);
