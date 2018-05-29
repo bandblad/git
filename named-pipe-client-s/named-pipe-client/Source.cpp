@@ -4,6 +4,8 @@
 #include <conio.h>
 #include <tchar.h>
 
+#define LOG(arg) std::cout << "LOG: " << arg << std::endl
+
 #define PIPE_NAME "\\\\.\\pipe\\foo"
 #define MSG "Hello, World!\0"
 #define MSG_LEN 15
@@ -20,15 +22,18 @@ int main()
 		// Check for errors
 		if (hPipe == INVALID_HANDLE_VALUE)
 			throw std::runtime_error("ERROR: Failed to open named pipe!");
+		LOG("Named Pipe was opened!");
 
 		// Check for errors
-		if (!WaitNamedPipe(PIPE_NAME, NMPWAIT_WAIT_FOREVER))
+		/*if (!WaitNamedPipe(PIPE_NAME, NMPWAIT_USE_DEFAULT_WAIT))
 			throw std::runtime_error("ERROR: Failed to connect to named pipe!");
+		LOG("Named Pipe replied on Wait!");*/
 
 		// Switch pipe to message mode
-		DWORD dwArg = PIPE_READMODE_MESSAGE;
+		DWORD dwArg = PIPE_READMODE_MESSAGE | PIPE_WAIT;
 		if (!SetNamedPipeHandleState(hPipe, &dwArg, NULL, NULL))
 			throw std::runtime_error("ERROR: Failed to switch pipe to message mode!");
+		LOG("Flags was set!");
 
 		// Send message to server
 		BOOL bWriteFile = WriteFile(hPipe, MSG, MSG_LEN, &dwArg, NULL);
@@ -36,6 +41,7 @@ int main()
 		// Check for errors
 		if (!bWriteFile)
 			throw std::runtime_error("ERROR: Failed to write to pipe!");
+		LOG("Message was send!");
 
 		// Close pipe handle
 		CloseHandle(hPipe);
