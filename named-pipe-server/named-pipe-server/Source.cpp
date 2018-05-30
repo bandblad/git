@@ -24,6 +24,9 @@ int main()
 		// Default security attributes, not owned, no name
 		ghMutex = CreateMutex(NULL, FALSE, NULL);
 
+		if (!ghMutex)
+			throw std::runtime_error("ERROR: Failed to create mutex!");
+
 		for (;;) {
 			// Create Named Pipe to handle client
 			HANDLE hNamedPipe = CreateNamedPipe(
