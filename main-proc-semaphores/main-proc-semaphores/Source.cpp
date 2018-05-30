@@ -1,11 +1,15 @@
 #include <iostream>
 #include <windows.h>
-#include <stdio.h>
 
 #define SEM_CNT 3
+#define SERVE_BUF_LEN 512
+#define PIPE_NAME "\\\\.\\pipe\\foo"
 
-#define SERVE_BUF_MAX 128
-#define SERVE_BUF_LEN SERVE_BUF_MAX - 1
+// Global mutex & semaphore handles
+HANDLE
+	ghSemaphore,
+	ghMutexSyncStdout,
+	ghMutexSyncProcCreation;
 
 DWORD WINAPI ThreadProc(LPVOID);
 
@@ -26,14 +30,20 @@ int main(void)
 		if (numof_procs < 1)
 			throw std::invalid_argument("ERROR: Invalid value!");
 
-		// Create semaphore handle
-		HANDLE 
-			hSemaphore = CreateSemaphore(NULL, SEM_CNT, SEM_CNT, NULL);
+		// Create & validate semaphore handle
+		ghSemaphore = CreateSemaphore(NULL, SEM_CNT, SEM_CNT, NULL);
+		if (!ghSemaphore)
+			throw std::runtime_error("ERROR: Failed to create semaphore!");
 
-		// Is the semaphore initialized?
-		if (!hSemaphore)
-			throw std::runtime_error("ERROR: Failed to initialize semaphore!");
+		// Create & validate global mutex handles
+		ghMutexSyncStdout = CreateMutex(NULL, FALSE, NULL);
+		if (!ghMutexSyncStdout)
+			throw std::runtime_error("ERROR: Failed to create mutex!");
 
+		ghMutexSyncProcCreation = CreateMutex(NULL, FALSE, NULL);
+		if (!ghMutexSyncProcCreation)
+			throw std::runtime_error("ERROR: Failed to create mutex!");
+			
 		// Create given number of worker threads
 		HANDLE
 			*hProcs = new HANDLE[numof_procs],
@@ -41,17 +51,10 @@ int main(void)
 			*hEnd = hProcs + numof_procs;
 
 		// Launch worker threads
-		while (hIt < hEnd) {
-			*hIt = CreateThread(
-				NULL, 0, 
-				(LPTHREAD_START_ROUTINE)ThreadProc, 
-				&hSemaphore, 
-				0, NULL
-			);
-
+		for (; hIt < hEnd; ++hIt) {
+			*hIt = CreateThread(NULL, 0, ThreadProc, NULL, 0, NULL);
 			if (*hIt == NULL)
 				throw std::runtime_error("ERROR: Failed to start process!");
-			++hIt;
 		}
 
 		// Wait for all worker threads to terminate
@@ -65,8 +68,10 @@ int main(void)
 			CloseHandle(*hIt++);
 		delete[] hProcs;
 
-		// Close semaphore handle
-		CloseHandle(hSemaphore);
+		// Close semaphore & mutex handles
+		CloseHandle(ghSemaphore);
+		CloseHandle(ghMutexSyncStdout);
+		CloseHandle(ghMutexSyncProcCreation);
 	}
 	catch (std::exception e) {
 		std::cerr << e.what() << std::endl;
@@ -78,100 +83,104 @@ int main(void)
 
 DWORD WINAPI ThreadProc(LPVOID arg)
 {
-	// Create pipe & semaphore handles
-	HANDLE
-		hReadPipe = NULL,
-		hWritePipe = NULL,
-		*hSemaphore = (HANDLE*)arg;
-
-	// We will be inheriting STDIO handles
-	SECURITY_ATTRIBUTES saArg;
-	saArg.nLength = sizeof(SECURITY_ATTRIBUTES);
-	saArg.bInheritHandle = TRUE;
-	saArg.lpSecurityDescriptor = NULL;
-
-	// Create anonimous IO pipe
-	if (!CreatePipe(&hReadPipe, &hWritePipe, &saArg, 0))
-		throw std::runtime_error("ERROR: Failed to create pipe!");
-
-	// Ensure the read handle to the pipe is not inherited
-	if (!SetHandleInformation(hReadPipe, HANDLE_FLAG_INHERIT, 0))
-		throw std::runtime_error("Stdout SetHandleInformation");
-
-	// Define process startup attributes
+	UNREFERENCED_PARAMETER(arg);
+	
+	// Create empty Startup Information structure
 	STARTUPINFO siArg;
 	ZeroMemory(&siArg, sizeof(STARTUPINFO));
-
-	siArg.cb = sizeof(STARTUPINFO);
-
-	// Redirect stderr to pipe
-	siArg.dwFlags = STARTF_USESTDHANDLES;
-	siArg.hStdError = hWritePipe;
-
-	siArg.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-	siArg.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
 
 	// Create empty Process Information structure
 	PROCESS_INFORMATION piArg;
 	ZeroMemory(&piArg, sizeof(PROCESS_INFORMATION));
 
-	// Create child process in new console window
-	BOOL bCreate = CreateProcess(
-		NULL, (char*)"proc-child.exe",
-		NULL, NULL, TRUE, CREATE_NEW_CONSOLE,
-		NULL, NULL, &siArg, &piArg
-	);
+	// Initialize Named Pipe handle
+	HANDLE hNamedPipe = INVALID_HANDLE_VALUE;
 
-	// Close process & thread handles if succeeded
-	// We do not need them
-	if (bCreate) {
-		CloseHandle(piArg.hProcess);
-		CloseHandle(piArg.hThread);
-	}
-	else
-		throw std::runtime_error("ERROR: Can't create process!");
+	// Ask mutex to create process
+	if (WaitForSingleObject(ghMutexSyncProcCreation, INFINITE) == WAIT_OBJECT_0) {
+		// Create & validate Named Pipe
+		hNamedPipe = CreateNamedPipe(
+			PIPE_NAME, PIPE_ACCESS_INBOUND,
+			PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+			PIPE_UNLIMITED_INSTANCES, SERVE_BUF_LEN,
+			SERVE_BUF_LEN, 0, NULL);
+		if (hNamedPipe == INVALID_HANDLE_VALUE)
+			throw std::runtime_error("ERROR: Failed to create Named Pipe!");
 
-	// Create empty buffer for incoming messages
-	char buffer[SERVE_BUF_MAX];
+		// Create child process in new console window
+		BOOL bCreate = CreateProcess(
+			NULL, (char*)"proc-child.exe",
+			NULL, NULL, FALSE, CREATE_NEW_CONSOLE,
+			NULL, NULL, &siArg, &piArg
+		);
 
-	DWORD 
-		dwWait, 
-		dwBCnt;
+		if (bCreate) {
+			// Close stdio handles
+			CloseHandle(siArg.hStdError);
+			CloseHandle(siArg.hStdInput);
+			CloseHandle(siArg.hStdOutput);
 
-	// Try to enter the semaphore gate
-	while (dwWait = WaitForSingleObject(*hSemaphore, 0) == WAIT_TIMEOUT);
+			// Close process handles
+			CloseHandle(piArg.hProcess);
+			CloseHandle(piArg.hThread);
+		}
+		else
+			throw std::runtime_error("ERROR: Can't create process!");
 
-	// If we successfully entered semaphore then perform task
-	if (dwWait == WAIT_OBJECT_0) {
-		// Receive messages from child process 
-		// till escape sequence
-		for (;;) {
-			// Clear buffer
-			ZeroMemory(buffer, SERVE_BUF_MAX);
-
-			// Read message from pipe
-			if (!ReadFile(hReadPipe, buffer, SERVE_BUF_LEN, &dwBCnt, NULL))
-				throw std::runtime_error("ERROR: Can't read from pipe!");
-
-			// Check how long is the message & print it
-			// If length is not == 1 then ignore message
-			if (dwBCnt == 1) {
-				std::cout << "Received new message: " << buffer[0] << std::endl;
-				if (buffer[0] == '4')
-					break;
-			}
+		// Wait for the client to connect
+		if (!ConnectNamedPipe(hNamedPipe, NULL)) {
+			// If client failed to connect
+			// then close pipe handle and
+			// generate an exception
+			CloseHandle(hNamedPipe);
+			throw std::runtime_error("ERROR: Client failed to connect to Named Pipe!");
 		}
 
+		// Release mutex after task
+		if (!ReleaseMutex(ghMutexSyncProcCreation))
+			throw std::runtime_error("ERROR: Failed to release mutex!");
+	}
+	else
+		throw std::runtime_error("ERROR: Mutex abandoned or failed!");
+
+	// Create empty buffer for incoming messages
+	char buffer[SERVE_BUF_LEN];
+
+	// Wait for semaphore to signal
+	if (WaitForSingleObject(ghSemaphore, INFINITE) == WAIT_OBJECT_0) {
+		// Receive messages from child process 
+		// till escape sequence
+		for (DWORD dwBRead;;) {
+			// Read message from pipe
+			if (ReadFile(hNamedPipe, &buffer, SERVE_BUF_LEN * sizeof(char), &dwBRead, NULL) && dwBRead) {
+				// Check how long is the message & print it
+				// If length != 1 then ignore message
+				if (dwBRead == 1) {
+					std::cout << "@ Received new message: " << buffer[0] << std::endl;
+					if (buffer[0] == '4')
+						break;
+				}
+			}
+			else if (GetLastError() == ERROR_BROKEN_PIPE) {
+				// Notify about disconnected client
+				std::cout << "* Client has disconnected!" << std::endl;
+				break;
+			}
+			else
+				throw std::runtime_error("ERROR: Failed to read from Pipe!");
+		}
+		
 		// Release the semaphore when task is finished
-		if (!ReleaseSemaphore(*hSemaphore, 1, NULL))
+		if (!ReleaseSemaphore(ghSemaphore, 1, NULL))
 			throw std::runtime_error("ERROR: Failed to release semaphore!");
 	}
 	else
-		throw std::runtime_error("ERROR: Failed to enter semaphore after timeout!");
+		throw std::runtime_error("ERROR: Semaphore failed!");
 
-	// Close pipe handles
-	CloseHandle(hReadPipe);
-	CloseHandle(hWritePipe);
-
+	// Disconnect server side of Pipe
+	// and close Pipe handle
+	DisconnectNamedPipe(hNamedPipe);
+	CloseHandle(hNamedPipe);
+	
 	return TRUE;
 }

@@ -7,21 +7,24 @@
 int main()
 {
 	try {
-		// Connect to Named Pipe
-		HANDLE hPipe = CreateFile(
-			PIPE_NAME, GENERIC_WRITE, FILE_SHARE_WRITE,
-			NULL, OPEN_EXISTING, 0, NULL
-		);
+		// Initialize instance of Named Pipe handle
+		HANDLE hPipe = INVALID_HANDLE_VALUE;
+		
+		// Wait for Named Pipe to signal
+		if (WaitNamedPipe(PIPE_NAME, NMPWAIT_WAIT_FOREVER)) {
+			// Connect to Named Pipe
+			hPipe = CreateFile(
+				PIPE_NAME, GENERIC_WRITE, FILE_SHARE_WRITE,
+				NULL, OPEN_EXISTING, 0, NULL
+			);
 
-		// Check for errors
-		if (hPipe == INVALID_HANDLE_VALUE)
-			throw std::runtime_error("ERROR: Failed to open named pipe!");
-
-		// Check for errors
-		/*if (!WaitNamedPipe(PIPE_NAME, NMPWAIT_WAIT_FOREVER))
-			throw std::runtime_error("ERROR: Failed to connect to named pipe!");
-		*/
-
+			// Check for errors
+			if (hPipe == INVALID_HANDLE_VALUE)
+				throw std::runtime_error("ERROR: Failed to open named pipe!");
+		}
+		else
+			throw std::runtime_error("ERROR: Named Pipe does not exist!");
+		
 		// Switch pipe to message mode
 		DWORD dwArg = PIPE_READMODE_MESSAGE | PIPE_WAIT;
 		if (!SetNamedPipeHandleState(hPipe, &dwArg, NULL, NULL))
