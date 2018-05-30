@@ -1,4 +1,5 @@
 #include <iostream>
+#include <string>
 #include <windows.h>
 
 #define SEM_CNT 3
@@ -7,17 +8,23 @@
 
 // Global mutex & semaphore handles
 HANDLE
-	ghSemaphore,
-	ghMutexSyncStdout,
-	ghMutexSyncProcCreation;
+	ghSemaphore = NULL,
+	ghMutexSyncStdout = NULL,
+	ghMutexSyncProcCreation = NULL;
 
+// Thread task
 DWORD WINAPI ThreadProc(LPVOID);
+
+// Combination of std::cout & mutex object
+void stdout_mutex(HANDLE&, const std::string&);
 
 int main(void)
 {
 	try {
 		// Prompt user action
-		std::cout << "Type number of processes to start (>0): ";
+		std::cout << "Put 'main-proc-client.exe' in the current directory.\
+		\nOtherwise programm will crash.\
+		\nType number of processes to start (>0): ";
 
 		// Read number of processess
 		int numof_procs;
@@ -67,22 +74,40 @@ int main(void)
 		while (hIt < hEnd)
 			CloseHandle(*hIt++);
 		delete[] hProcs;
-
-		// Close semaphore & mutex handles
-		CloseHandle(ghSemaphore);
-		CloseHandle(ghMutexSyncStdout);
-		CloseHandle(ghMutexSyncProcCreation);
 	}
 	catch (std::exception e) {
 		std::cerr << e.what() << std::endl;
 	}
 	
+	// Close semaphore & mutex handles
+	if (ghSemaphore)
+		CloseHandle(ghSemaphore);
+	
+	if (ghMutexSyncStdout)
+		CloseHandle(ghMutexSyncStdout);
+
+	if (ghMutexSyncProcCreation)
+		CloseHandle(ghMutexSyncProcCreation);	
+
 	system("pause");
 	return 0;
 }
 
-DWORD WINAPI ThreadProc(LPVOID arg)
-{
+void stdout_mutex(HANDLE& hMutex, const std::string& message) {
+	// Wait mutex to signal
+	if (WaitForSingleObject(hMutex, INFINITE) == WAIT_OBJECT_0) {
+		// Write message to stdout
+		std::cout << message;
+		
+		// Release mutex after writing to stdout
+		if (!ReleaseMutex(hMutex))
+			throw std::runtime_error("ERROR: Failed to release mutex!");
+	}
+	else
+		throw std::runtime_error("ERROR: Mutex abandoned or failed!");
+}
+
+DWORD WINAPI ThreadProc(LPVOID arg) {
 	UNREFERENCED_PARAMETER(arg);
 	
 	// Create empty Startup Information structure
@@ -96,91 +121,115 @@ DWORD WINAPI ThreadProc(LPVOID arg)
 	// Initialize Named Pipe handle
 	HANDLE hNamedPipe = INVALID_HANDLE_VALUE;
 
-	// Ask mutex to create process
-	if (WaitForSingleObject(ghMutexSyncProcCreation, INFINITE) == WAIT_OBJECT_0) {
-		// Create & validate Named Pipe
-		hNamedPipe = CreateNamedPipe(
-			PIPE_NAME, PIPE_ACCESS_INBOUND,
-			PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-			PIPE_UNLIMITED_INSTANCES, SERVE_BUF_LEN,
-			SERVE_BUF_LEN, 0, NULL);
-		if (hNamedPipe == INVALID_HANDLE_VALUE)
-			throw std::runtime_error("ERROR: Failed to create Named Pipe!");
-
-		// Create child process in new console window
-		BOOL bCreate = CreateProcess(
-			NULL, (char*)"proc-child.exe",
-			NULL, NULL, FALSE, CREATE_NEW_CONSOLE,
-			NULL, NULL, &siArg, &piArg
-		);
-
-		if (bCreate) {
-			// Close stdio handles
-			CloseHandle(siArg.hStdError);
-			CloseHandle(siArg.hStdInput);
-			CloseHandle(siArg.hStdOutput);
-
-			// Close process handles
-			CloseHandle(piArg.hProcess);
-			CloseHandle(piArg.hThread);
-		}
-		else
-			throw std::runtime_error("ERROR: Can't create process!");
-
-		// Wait for the client to connect
-		if (!ConnectNamedPipe(hNamedPipe, NULL)) {
-			// If client failed to connect
-			// then close pipe handle and
-			// generate an exception
-			CloseHandle(hNamedPipe);
-			throw std::runtime_error("ERROR: Client failed to connect to Named Pipe!");
-		}
-
-		// Release mutex after task
-		if (!ReleaseMutex(ghMutexSyncProcCreation))
-			throw std::runtime_error("ERROR: Failed to release mutex!");
-	}
-	else
-		throw std::runtime_error("ERROR: Mutex abandoned or failed!");
-
 	// Create empty buffer for incoming messages
 	char buffer[SERVE_BUF_LEN];
+	
+	// Dangerous magic
+	try {
+		// Ask mutex to create process
+		if (WaitForSingleObject(ghMutexSyncProcCreation, INFINITE) == WAIT_OBJECT_0) {
+			// Create & validate Named Pipe
+			hNamedPipe = CreateNamedPipe(
+				PIPE_NAME, PIPE_ACCESS_INBOUND,
+				PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+				PIPE_UNLIMITED_INSTANCES, SERVE_BUF_LEN,
+				SERVE_BUF_LEN, 0, NULL);
+			if (hNamedPipe == INVALID_HANDLE_VALUE)
+				throw std::runtime_error("ERROR: Failed to create Named Pipe!");
 
-	// Wait for semaphore to signal
-	if (WaitForSingleObject(ghSemaphore, INFINITE) == WAIT_OBJECT_0) {
-		// Receive messages from child process 
-		// till escape sequence
-		for (DWORD dwBRead;;) {
-			// Read message from pipe
-			if (ReadFile(hNamedPipe, &buffer, SERVE_BUF_LEN * sizeof(char), &dwBRead, NULL) && dwBRead) {
-				// Check how long is the message & print it
-				// If length != 1 then ignore message
-				if (dwBRead == 1) {
-					std::cout << "@ Received new message: " << buffer[0] << std::endl;
-					if (buffer[0] == '4')
-						break;
-				}
-			}
-			else if (GetLastError() == ERROR_BROKEN_PIPE) {
-				// Notify about disconnected client
-				std::cout << "* Client has disconnected!" << std::endl;
-				break;
+			// Create child process in new console window
+			BOOL bCreate = CreateProcess(
+				NULL, (char*)"main-proc-client.exe",
+				NULL, NULL, FALSE, CREATE_NEW_CONSOLE,
+				NULL, NULL, &siArg, &piArg
+			);
+
+			if (bCreate) {
+				// Close stdio handles
+				CloseHandle(siArg.hStdError);
+				CloseHandle(siArg.hStdInput);
+				CloseHandle(siArg.hStdOutput);
+
+				// Close process handles
+				CloseHandle(piArg.hProcess);
+				CloseHandle(piArg.hThread);
 			}
 			else
-				throw std::runtime_error("ERROR: Failed to read from Pipe!");
-		}
-		
-		// Release the semaphore when task is finished
-		if (!ReleaseSemaphore(ghSemaphore, 1, NULL))
-			throw std::runtime_error("ERROR: Failed to release semaphore!");
-	}
-	else
-		throw std::runtime_error("ERROR: Semaphore failed!");
+				throw std::runtime_error("ERROR: Can't create process!");
 
+			// Wait for the client to connect
+			if (!ConnectNamedPipe(hNamedPipe, NULL)) {
+				// If client failed to connect
+				// then close pipe handle and
+				// generate an exception
+				CloseHandle(hNamedPipe);
+				throw std::runtime_error("ERROR: Client failed to connect to Named Pipe!");
+			}
+
+			// Release mutex after task
+			if (!ReleaseMutex(ghMutexSyncProcCreation))
+				throw std::runtime_error("ERROR: Failed to release mutex!");
+		}
+		else
+			throw std::runtime_error("ERROR: Mutex abandoned or failed!");
+
+		// Wait for semaphore to signal
+		if (WaitForSingleObject(ghSemaphore, INFINITE) == WAIT_OBJECT_0) {
+			// Receive messages from child process 
+			// till escape sequence
+			for (DWORD dwBRead;;) {
+				// Read message from pipe
+				if (ReadFile(hNamedPipe, &buffer, SERVE_BUF_LEN * sizeof(char), &dwBRead, NULL) && dwBRead) {
+					// Check how long is the message & print it
+					// If length != 1 then ignore message
+					if (dwBRead == 1) {
+						std::string message = "@ Received new message from thread #";
+						message += std::to_string(GetCurrentThreadId());
+						message += ':';
+						message += ' ';
+						message += buffer[0];
+						message += '\n';
+
+						// Write message to console
+						stdout_mutex(ghMutexSyncStdout, message);
+						
+						// Stop waiting new messages
+						// because client sent 'exit'
+						if (buffer[0] == '4')
+							break;
+					}
+				}
+				else if (GetLastError() == ERROR_BROKEN_PIPE) {
+					// Notify about disconnected client
+					std::string message = "* Client has disconnected from thread #";
+					message += std::to_string(GetCurrentThreadId());
+					message += '\n';
+
+					// Write message to console
+					stdout_mutex(ghMutexSyncStdout, message);
+					break;
+				}
+				else
+					throw std::runtime_error("ERROR: Failed to read from Pipe!");
+			}
+
+			// Release the semaphore when task is finished
+			if (!ReleaseSemaphore(ghSemaphore, 1, NULL))
+				throw std::runtime_error("ERROR: Failed to release semaphore!");
+		}
+		else
+			throw std::runtime_error("ERROR: Semaphore failed!");
+	}
+	catch (std::exception e) {
+		std::cerr << e.what() << std::endl;
+	}
+	
 	// Disconnect server side of Pipe
 	// and close Pipe handle
-	DisconnectNamedPipe(hNamedPipe);
-	CloseHandle(hNamedPipe);
-	
+	if (hNamedPipe != INVALID_HANDLE_VALUE) {
+		DisconnectNamedPipe(hNamedPipe);
+		CloseHandle(hNamedPipe);
+	}
+
 	return TRUE;
 }

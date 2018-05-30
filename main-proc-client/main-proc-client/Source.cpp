@@ -10,7 +10,6 @@ int main()
 	HANDLE hPipe = INVALID_HANDLE_VALUE;
 	
 	try {
-		// Wait for Named Pipe to signal
 		if (WaitNamedPipe(PIPE_NAME, NMPWAIT_WAIT_FOREVER)) {
 			// Connect to Named Pipe
 			hPipe = CreateFile(
@@ -24,7 +23,7 @@ int main()
 		}
 		else
 			throw std::runtime_error("ERROR: Named Pipe does not exist!");
-		
+
 		// Switch pipe to message mode
 		DWORD dwArg = PIPE_READMODE_MESSAGE | PIPE_WAIT;
 		if (!SetNamedPipeHandleState(hPipe, &dwArg, NULL, NULL))
@@ -32,7 +31,9 @@ int main()
 
 		// Prompt user input
 		std::cout << "Start sending messages to server.\
-		\nType 'exit' in console to exit application.\n"
+		\nMessages must be numbers from 0 to 4.\
+		\nNumbers from 0 to 3 is regular events.\
+		\nNumber 4 is special event - 'exit'.\n"
 		<< std::endl;
 
 		for (std::string el;;) {
@@ -40,19 +41,29 @@ int main()
 			// 'exit' is the exit
 			std::cout << '>' << ' ';
 			std::getline(std::cin, el);
-			
-			// Check for empty messages
-			if (el.length()) {
-				if (el.compare("exit")) {
-					// Send message to server
-					if (!WriteFile(hPipe, el.c_str(), el.length(), &dwArg, NULL))
-						throw std::runtime_error("ERROR: Failed to write to pipe!");
 
-					// Flush if succeeded
-					FlushFileBuffers(hPipe);
+			if (std::cin.good()) {
+				// Check length of message
+				// If length() != 1 then ignore message
+				if (el.length() == 1) {
+					char msg = el[0];
+					if (msg >= '0' && msg <= '4') {
+						// If message is '4' then
+						// disconnect from pipe
+						if (msg == '4')
+							break;
+
+						// Send message to server
+						if (!WriteFile(hPipe, &msg, 1, &dwArg, NULL))
+							throw std::runtime_error("ERROR: Failed to write to pipe!");
+
+						// Flush Named Pipe
+						FlushFileBuffers(hPipe);
+					}
 				}
-				else break;
 			}
+			else
+				throw std::runtime_error("ERROR: stdin failed!");
 		}
 	}
 	catch (std::exception e) {
